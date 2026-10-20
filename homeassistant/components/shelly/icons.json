@@ -135,11 +135,17 @@
     "get_kvs_value": {
       "service": "mdi:import"
     },
+    "get_schedule": {
+      "service": "mdi:calendar-clock"
+    },
     "set_cover_position_and_tilt": {
       "service": "mdi:window-shutter-cog"
     },
     "set_kvs_value": {
       "service": "mdi:export"
+    },
+    "set_schedule": {
+      "service": "mdi:calendar-edit"
     }
   }
 }

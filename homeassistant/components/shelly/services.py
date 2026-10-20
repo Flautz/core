@@ -6,13 +6,20 @@ from aioshelly.const import RPC_GENERATIONS
 from aioshelly.exceptions import DeviceConnectionError, RpcCallError
 import probatio
 
+from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
 from homeassistant.components.cover import (
     ATTR_POSITION,
     ATTR_TILT_POSITION,
     DOMAIN as COVER_DOMAIN,
     CoverEntityFeature,
 )
-from homeassistant.const import ATTR_DEVICE_ID
+from homeassistant.const import (
+    ATTR_DEVICE_ID,
+    ATTR_TEMPERATURE,
+    ATTR_TIME,
+    CONF_ENABLED,
+    WEEKDAYS,
+)
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -22,6 +29,7 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.service import (
     async_get_device_and_config_entry,
     async_register_platform_entity_service,
@@ -29,13 +37,26 @@ from homeassistant.helpers.service import (
 from homeassistant.helpers.typing import VolDictType
 from homeassistant.util.json import JsonValueType
 
-from .const import ATTR_KEY, ATTR_VALUE, CONF_SLEEP_PERIOD, DOMAIN
+from .climate import RpcBluTrvClimate
+from .const import (
+    ATTR_KEY,
+    ATTR_RULES,
+    ATTR_VALUE,
+    ATTR_VALVE_POSITION,
+    ATTR_WEEKDAYS,
+    BLU_TRV_MAX_SCHEDULE_RULES,
+    BLU_TRV_TEMPERATURE_SETTINGS,
+    CONF_SLEEP_PERIOD,
+    DOMAIN,
+)
 from .coordinator import ShellyConfigEntry
 from .utils import get_device_entry_gen
 
 SERVICE_GET_KVS_VALUE = "get_kvs_value"
 SERVICE_SET_KVS_VALUE = "set_kvs_value"
 SERVICE_SET_COVER_POSITION_AND_TILT = "set_cover_position_and_tilt"
+SERVICE_GET_SCHEDULE = "get_schedule"
+SERVICE_SET_SCHEDULE = "set_schedule"
 SERVICE_GET_KVS_VALUE_SCHEMA = probatio.Schema(
     {
         probatio.Required(ATTR_DEVICE_ID): cv.string,
@@ -57,6 +78,36 @@ SERVICE_SET_COVER_POSITION_AND_TILT_SCHEMA: VolDictType = {
     ),
     probatio.Required(ATTR_TILT_POSITION): probatio.All(
         probatio.Coerce(int), probatio.Range(min=0, max=100)
+    ),
+}
+
+SCHEDULE_RULE_SCHEMA = probatio.All(
+    probatio.Schema(
+        {
+            probatio.Required(ATTR_TIME): cv.time,
+            probatio.Required(ATTR_WEEKDAYS): probatio.All(
+                probatio.EnsureList(), probatio.Length(min=1), [probatio.In(WEEKDAYS)]
+            ),
+            probatio.Exclusive(ATTR_TEMPERATURE, "target"): probatio.All(
+                probatio.Coerce(float),
+                probatio.Range(
+                    min=BLU_TRV_TEMPERATURE_SETTINGS["min"],
+                    max=BLU_TRV_TEMPERATURE_SETTINGS["max"],
+                ),
+            ),
+            probatio.Exclusive(ATTR_VALVE_POSITION, "target"): probatio.All(
+                probatio.Coerce(int), probatio.Range(min=0, max=100)
+            ),
+            probatio.Optional(CONF_ENABLED, default=True): cv.boolean,
+        }
+    ),
+    probatio.AtLeastOne(ATTR_TEMPERATURE, ATTR_VALVE_POSITION),
+)
+SERVICE_SET_SCHEDULE_SCHEMA: VolDictType = {
+    probatio.Required(ATTR_RULES): probatio.All(
+        probatio.EnsureList(),
+        probatio.Length(max=BLU_TRV_MAX_SCHEDULE_RULES),
+        [SCHEDULE_RULE_SCHEMA],
     ),
 }
 
@@ -138,6 +189,29 @@ async def async_set_kvs_value(call: ServiceCall) -> None:
     )
 
 
+def _get_blu_trv_climate(entity: Entity) -> RpcBluTrvClimate:
+    """Return the entity if it is a BLU TRV, otherwise raise."""
+    if not isinstance(entity, RpcBluTrvClimate):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="schedule_not_supported",
+            translation_placeholders={"entity": entity.entity_id},
+        )
+    return entity
+
+
+async def async_get_schedule(entity: Entity, call: ServiceCall) -> ServiceResponse:
+    """Handle the get_schedule service call."""
+    return cast(
+        ServiceResponse, await _get_blu_trv_climate(entity).async_get_schedule()
+    )
+
+
+async def async_set_schedule(entity: Entity, call: ServiceCall) -> None:
+    """Handle the set_schedule service call."""
+    await _get_blu_trv_climate(entity).async_set_schedule(call.data[ATTR_RULES])
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Set up the services for Shelly integration."""
@@ -173,4 +247,21 @@ def async_setup_services(hass: HomeAssistant) -> None:
         required_features=[
             CoverEntityFeature.SET_POSITION | CoverEntityFeature.SET_TILT_POSITION
         ],
+    )
+    async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_GET_SCHEDULE,
+        entity_domain=CLIMATE_DOMAIN,
+        schema=None,
+        func=async_get_schedule,
+        supports_response=SupportsResponse.ONLY,
+    )
+    async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_SET_SCHEDULE,
+        entity_domain=CLIMATE_DOMAIN,
+        schema=SERVICE_SET_SCHEDULE_SCHEMA,
+        func=async_set_schedule,
     )

@@ -329,16 +329,16 @@ class RestEntityDescription(EntityDescription):
     value: Callable[[dict, Any], Any] | None = None
 
 
-def rpc_call[_T: ShellyRpcEntity, **_P](
-    func: Callable[Concatenate[_T, _P], Awaitable[None]],
-) -> Callable[Concatenate[_T, _P], Coroutine[Any, Any, None]]:
+def rpc_call[_T: ShellyRpcEntity, **_P, _R](
+    func: Callable[Concatenate[_T, _P], Awaitable[_R]],
+) -> Callable[Concatenate[_T, _P], Coroutine[Any, Any, _R | None]]:
     """Catch rpc_call exceptions."""
 
     @wraps(func)
-    async def cmd_wrapper(self: _T, *args: _P.args, **kwargs: _P.kwargs) -> None:
+    async def cmd_wrapper(self: _T, *args: _P.args, **kwargs: _P.kwargs) -> _R | None:
         """Wrap all command methods."""
         try:
-            await func(self, *args, **kwargs)
+            return await func(self, *args, **kwargs)
         except DeviceConnectionError as err:
             self.coordinator.last_update_success = False
             raise HomeAssistantError(
@@ -360,6 +360,7 @@ def rpc_call[_T: ShellyRpcEntity, **_P](
             ) from err
         except InvalidAuthError:
             await self.coordinator.async_shutdown_device_and_start_reauth()
+        return None
 
     return cmd_wrapper
 

@@ -49,3 +49,57 @@ set_cover_position_and_tilt:
           min: 0
           max: 100
           unit_of_measurement: "%"
+
+get_schedule:
+  target:
+    entity:
+      integration: shelly
+      domain: climate
+
+set_schedule:
+  target:
+    entity:
+      integration: shelly
+      domain: climate
+  fields:
+    rules:
+      required: true
+      selector:
+        object:
+          multiple: true
+          label_field: time
+          fields:
+            time:
+              required: true
+              selector:
+                time:
+            weekdays:
+              required: true
+              selector:
+                select:
+                  multiple: true
+                  translation_key: weekday
+                  options:
+                    - mon
+                    - tue
+                    - wed
+                    - thu
+                    - fri
+                    - sat
+                    - sun
+            temperature:
+              selector:
+                number:
+                  min: 4
+                  max: 30
+                  step: 0.1
+                  unit_of_measurement: "°C"
+            valve_position:
+              selector:
+                number:
+                  min: 0
+                  max: 100
+                  unit_of_measurement: "%"
+            enabled:
+              selector:
+                boolean:

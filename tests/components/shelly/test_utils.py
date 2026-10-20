@@ -26,6 +26,7 @@ from homeassistant.components.shelly.const import (
 )
 from homeassistant.components.shelly.utils import (
     ShellyReceiver,
+    blu_trv_schedule_rule_to_dict,
     get_block_device_sleep_period,
     get_block_input_triggers,
     get_block_number_of_channels,
@@ -369,3 +370,47 @@ async def test_get_rpc_sub_device_name_with_emeter_phase(
 
     assert get_rpc_sub_device_name(mock_rpc_device, "em:0", "A") == "Test name Phase A"
     assert get_rpc_sub_device_name(mock_rpc_device, "em:0", "B") == "Test name Phase B"
+
+
+@pytest.mark.parametrize(
+    ("timespec", "expected"),
+    [
+        pytest.param(
+            "0 30 6 * * *",
+            {
+                "time": "06:30:00",
+                "weekdays": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            },
+            id="every_day",
+        ),
+        pytest.param(
+            "0 0 7 * * mon-fri,SUN",
+            {
+                "time": "07:00:00",
+                "weekdays": ["mon", "tue", "wed", "thu", "fri", "sun"],
+            },
+            id="range_and_day",
+        ),
+        pytest.param(
+            "@sunrise * * MON", {"timespec": "@sunrise * * MON"}, id="sunrise"
+        ),
+        pytest.param("0 0 8 1 * *", {"timespec": "0 0 8 1 * *"}, id="day_of_month"),
+        pytest.param("0 0 25 * * *", {"timespec": "0 0 25 * * *"}, id="invalid_hour"),
+        pytest.param("0 0 8 * * XYZ", {"timespec": "0 0 8 * * XYZ"}, id="invalid_day"),
+        pytest.param(
+            "0 0 8 * * FRI-MON", {"timespec": "0 0 8 * * FRI-MON"}, id="reversed_range"
+        ),
+    ],
+)
+def test_blu_trv_schedule_rule_to_dict(timespec: str, expected: dict[str, Any]) -> None:
+    """Test converting BLU TRV schedule rules with different timespecs."""
+    rule = {"rule_id": 0, "enable": True, "target_C": 20.0, "timespec": timespec}
+
+    assert (
+        blu_trv_schedule_rule_to_dict(rule)
+        == {
+            "enabled": True,
+            "temperature": 20.0,
+        }
+        | expected
+    )

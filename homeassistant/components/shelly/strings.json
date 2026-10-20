@@ -836,6 +836,9 @@
     "rpc_call_error": {
       "message": "RPC call error occurred for {device}"
     },
+    "schedule_not_supported": {
+      "message": "{entity} does not support schedules"
+    },
     "unsupported_media_content_type": {
       "message": "Unsupported media content type for Shelly device: {media_content_type}"
     },
@@ -1024,6 +1027,17 @@
       "options": {
         "manual": "Enter address manually"
       }
+    },
+    "weekday": {
+      "options": {
+        "mon": "[%key:common::time::monday%]",
+        "tue": "[%key:common::time::tuesday%]",
+        "wed": "[%key:common::time::wednesday%]",
+        "thu": "[%key:common::time::thursday%]",
+        "fri": "[%key:common::time::friday%]",
+        "sat": "[%key:common::time::saturday%]",
+        "sun": "[%key:common::time::sunday%]"
+      }
     }
   },
   "services": {
@@ -1040,6 +1054,10 @@
         }
       },
       "name": "Get Shelly KVS value"
+    },
+    "get_schedule": {
+      "description": "Returns the schedule rules stored on a Shelly BLU TRV.",
+      "name": "Get schedule"
     },
     "set_cover_position_and_tilt": {
       "description": "Moves a cover and its tilt to the target positions with a single command.",
@@ -1072,6 +1090,16 @@
         }
       },
       "name": "Set Shelly KVS value"
+    },
+    "set_schedule": {
+      "description": "Replaces the schedule rules stored on a Shelly BLU TRV.",
+      "fields": {
+        "rules": {
+          "description": "Schedule rules. Each rule sets a temperature or valve position at a time of day on the selected weekdays.",
+          "name": "Rules"
+        }
+      },
+      "name": "Set schedule"
     }
   }
 }

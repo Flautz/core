@@ -206,6 +206,10 @@ BLU_TRV_TEMPERATURE_SETTINGS: Final = {
     "default": 20.0,
 }
 
+# Day names in the order the Shelly app writes them in schedule timespecs
+BLU_TRV_SCHEDULE_DAYS: Final = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+BLU_TRV_MAX_SCHEDULE_RULES: Final = 10
+
 # Kelvin value for colorTemp
 KELVIN_MAX_VALUE: Final = 6500
 KELVIN_MIN_VALUE_WHITE: Final = 2700
@@ -357,5 +361,9 @@ TRV_CHANNEL = 0
 
 ATTR_KEY = "key"
 ATTR_VALUE = "value"
+ATTR_RULES = "rules"
+ATTR_TIMESPEC = "timespec"
+ATTR_VALVE_POSITION = "valve_position"
+ATTR_WEEKDAYS = "weekdays"
 
 DRIVER_MISSING_ERROR = "Sensor driver missing from firmware"

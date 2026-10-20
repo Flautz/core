@@ -11,6 +11,7 @@ from aioshelly.const import (
     MODEL_WALL_DISPLAY,
 )
 from aioshelly.exceptions import DeviceConnectionError, InvalidAuthError, RpcCallError
+import probatio
 import pytest
 from pytest_homeassistant.common import (
     async_load_json_object_fixture,
@@ -45,9 +46,14 @@ from homeassistant.components.shelly.climate import (
     ShellyClimateExtraStoredData,
 )
 from homeassistant.components.shelly.const import (
+    ATTR_RULES,
     DOMAIN,
     MODEL_LINKEDGO_ST802_THERMOSTAT,
     MODEL_LINKEDGO_ST1820_THERMOSTAT,
+)
+from homeassistant.components.shelly.services import (
+    SERVICE_GET_SCHEDULE,
+    SERVICE_SET_SCHEDULE,
 )
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
@@ -1232,6 +1238,210 @@ async def test_blu_trv_set_target_temp_auth_error(
     assert "context" in flow
     assert flow["context"].get("source") == SOURCE_REAUTH
     assert flow["context"].get("entry_id") == entry.entry_id
+
+
+BLU_TRV_SCHEDULE_RULES = {
+    "schedule_rev": 7,
+    "rules": [
+        {
+            "rule_id": 0,
+            "enable": True,
+            "target_C": 21.0,
+            "timespec": "0 30 6 * * SUN,MON,TUE,WED,THU,FRI,SAT",
+        },
+        {
+            "rule_id": 1,
+            "enable": False,
+            "pos": 40,
+            "timespec": "0 0 22 * * MON-FRI",
+        },
+        {
+            "rule_id": 3,
+            "enable": True,
+            "target_C": 17.5,
+            "timespec": "0 0 8 1 * *",
+        },
+    ],
+}
+
+
+async def test_blu_trv_get_schedule(
+    hass: HomeAssistant, mock_blu_trv: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test getting the schedule of a BLU TRV."""
+    entity_id = "climate.trv_name"
+    monkeypatch.delitem(mock_blu_trv.status, "thermostat:0")
+    mock_blu_trv.blu_trv_list_schedule_rules = AsyncMock(
+        return_value=BLU_TRV_SCHEDULE_RULES
+    )
+    await init_integration(hass, 3, model=MODEL_BLU_GATEWAY_G3)
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        SERVICE_GET_SCHEDULE,
+        {ATTR_ENTITY_ID: entity_id},
+        blocking=True,
+        return_response=True,
+    )
+
+    mock_blu_trv.blu_trv_list_schedule_rules.assert_called_once_with(200)
+    assert response == {
+        entity_id: {
+            ATTR_RULES: [
+                {
+                    "enabled": True,
+                    "time": "06:30:00",
+                    "weekdays": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                    "temperature": 21.0,
+                },
+                {
+                    "enabled": False,
+                    "time": "22:00:00",
+                    "weekdays": ["mon", "tue", "wed", "thu", "fri"],
+                    "valve_position": 40,
+                },
+                {"enabled": True, "timespec": "0 0 8 1 * *", "temperature": 17.5},
+            ]
+        }
+    }
+
+
+async def test_blu_trv_set_schedule(
+    hass: HomeAssistant, mock_blu_trv: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test replacing the schedule of a BLU TRV."""
+    entity_id = "climate.trv_name"
+    monkeypatch.delitem(mock_blu_trv.status, "thermostat:0")
+    mock_blu_trv.blu_trv_list_schedule_rules = AsyncMock(
+        return_value=BLU_TRV_SCHEDULE_RULES
+    )
+    mock_blu_trv.blu_trv_update_schedule_rule = AsyncMock()
+    mock_blu_trv.blu_trv_add_schedule_rule = AsyncMock(return_value=4)
+    mock_blu_trv.blu_trv_remove_schedule_rule = AsyncMock()
+    await init_integration(hass, 3, model=MODEL_BLU_GATEWAY_G3)
+
+    # Unchanged first rule, changed second rule, third rule removed
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_SET_SCHEDULE,
+        {
+            ATTR_ENTITY_ID: entity_id,
+            ATTR_RULES: [
+                {
+                    "time": "06:30",
+                    "weekdays": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                    "temperature": 21,
+                },
+                {"time": "22:15", "weekdays": ["sat", "sun"], "temperature": 18.5},
+            ],
+        },
+        blocking=True,
+    )
+
+    mock_blu_trv.blu_trv_update_schedule_rule.assert_called_once_with(
+        200, 1, {"enable": True, "timespec": "0 15 22 * * SUN,SAT", "target_C": 18.5}
+    )
+    mock_blu_trv.blu_trv_remove_schedule_rule.assert_called_once_with(200, 3)
+    mock_blu_trv.blu_trv_add_schedule_rule.assert_not_called()
+
+    # More rules than on the TRV: the rest is added
+    mock_blu_trv.blu_trv_update_schedule_rule.reset_mock()
+    mock_blu_trv.blu_trv_remove_schedule_rule.reset_mock()
+    rules = [
+        {"time": "06:30", "weekdays": ["mon"], "temperature": 21},
+        {"time": "22:00", "weekdays": ["mon"], "valve_position": 40},
+        {"time": "08:00", "weekdays": ["sun"], "temperature": 17.5},
+        {"time": "09:05", "weekdays": ["sun"], "temperature": 20, "enabled": False},
+    ]
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_SET_SCHEDULE,
+        {ATTR_ENTITY_ID: entity_id, ATTR_RULES: rules},
+        blocking=True,
+    )
+
+    assert mock_blu_trv.blu_trv_update_schedule_rule.call_count == 3
+    mock_blu_trv.blu_trv_add_schedule_rule.assert_called_once_with(
+        200, {"enable": False, "timespec": "0 5 9 * * SUN", "target_C": 20.0}
+    )
+    mock_blu_trv.blu_trv_remove_schedule_rule.assert_not_called()
+
+
+VALID_RULE = {"time": "06:30", "weekdays": ["mon"], "temperature": 21}
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        pytest.param([{"time": "06:30", "weekdays": ["mon"]}], id="no_target"),
+        pytest.param(
+            [VALID_RULE | {"valve_position": 5}], id="temperature_and_position"
+        ),
+        pytest.param([VALID_RULE | {"weekdays": []}], id="no_weekdays"),
+        pytest.param([VALID_RULE | {"weekdays": ["monday"]}], id="invalid_weekday"),
+        pytest.param([VALID_RULE | {"temperature": 31}], id="temperature_too_high"),
+        pytest.param([{"weekdays": ["mon"], "temperature": 21}], id="no_time"),
+        pytest.param([VALID_RULE] * 11, id="too_many_rules"),
+    ],
+)
+async def test_blu_trv_set_schedule_invalid(
+    hass: HomeAssistant,
+    mock_blu_trv: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    rules: list[dict[str, Any]],
+) -> None:
+    """Test invalid schedules are rejected."""
+    monkeypatch.delitem(mock_blu_trv.status, "thermostat:0")
+    await init_integration(hass, 3, model=MODEL_BLU_GATEWAY_G3)
+
+    with pytest.raises(probatio.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_SET_SCHEDULE,
+            {ATTR_ENTITY_ID: "climate.trv_name", ATTR_RULES: rules},
+            blocking=True,
+        )
+
+
+async def test_blu_trv_schedule_rpc_error(
+    hass: HomeAssistant, mock_blu_trv: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test errors of the TRV are raised."""
+    monkeypatch.delitem(mock_blu_trv.status, "thermostat:0")
+    mock_blu_trv.blu_trv_list_schedule_rules = AsyncMock(
+        side_effect=RpcCallError(-103, "Argument `target_C` is invalid")
+    )
+    await init_integration(hass, 3, model=MODEL_BLU_GATEWAY_G3)
+
+    with pytest.raises(
+        HomeAssistantError,
+        match="RPC call error occurred while calling action for climate.trv_name",
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_GET_SCHEDULE,
+            {ATTR_ENTITY_ID: "climate.trv_name"},
+            blocking=True,
+            return_response=True,
+        )
+
+
+async def test_schedule_not_supported(
+    hass: HomeAssistant, mock_rpc_device: Mock
+) -> None:
+    """Test schedule actions on a climate entity that is not a BLU TRV."""
+    await init_integration(hass, 2, model=MODEL_WALL_DISPLAY)
+
+    with pytest.raises(ServiceValidationError) as exc_info:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_GET_SCHEDULE,
+            {ATTR_ENTITY_ID: "climate.test_name"},
+            blocking=True,
+            return_response=True,
+        )
+
+    assert exc_info.value.translation_key == "schedule_not_supported"
 
 
 async def test_rpc_linkedgo_st802_thermostat(

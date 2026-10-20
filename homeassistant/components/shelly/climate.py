@@ -29,6 +29,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import (
+    ATTR_RULES,
     BLU_TRV_TEMPERATURE_SETTINGS,
     DOMAIN,
     LOGGER,
@@ -50,6 +51,8 @@ from .entity import (
 )
 from .utils import (
     async_remove_shelly_entity,
+    blu_trv_schedule_rule_from_dict,
+    blu_trv_schedule_rule_to_dict,
     get_device_entry_gen,
     get_rpc_key_by_role,
     get_rpc_key_id,
@@ -857,3 +860,30 @@ class RpcBluTrvClimate(ShellyRpcEntity, ClimateEntity):
         await self.coordinator.device.blu_trv_set_target_temperature(
             self._id, kwargs[ATTR_TEMPERATURE]
         )
+
+    @rpc_call
+    async def async_get_schedule(self) -> dict[str, Any]:
+        """Return the schedule rules stored on the TRV."""
+        result = await self.coordinator.device.blu_trv_list_schedule_rules(self._id)
+        return {
+            ATTR_RULES: [
+                blu_trv_schedule_rule_to_dict(rule) for rule in result["rules"]
+            ]
+        }
+
+    @rpc_call
+    async def async_set_schedule(self, rules: list[dict[str, Any]]) -> None:
+        """Replace the schedule rules stored on the TRV."""
+        device = self.coordinator.device
+        current = (await device.blu_trv_list_schedule_rules(self._id))["rules"]
+        new_rules = [blu_trv_schedule_rule_from_dict(rule) for rule in rules]
+        # Update rules in place so the TRV never runs without a schedule
+        for old_rule, new_rule in zip(current, new_rules, strict=False):
+            if {k: v for k, v in old_rule.items() if k != "rule_id"} != new_rule:
+                await device.blu_trv_update_schedule_rule(
+                    self._id, old_rule["rule_id"], new_rule
+                )
+        for new_rule in new_rules[len(current) :]:
+            await device.blu_trv_add_schedule_rule(self._id, new_rule)
+        for old_rule in current[len(new_rules) :]:
+            await device.blu_trv_remove_schedule_rule(self._id, old_rule["rule_id"])

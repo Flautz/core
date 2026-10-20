@@ -1,6 +1,7 @@
 """Shelly helpers functions."""
 
 from collections.abc import Iterable, Mapping
+from datetime import time as dt_time
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,10 +35,14 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.network import async_get_source_ip
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    ATTR_TEMPERATURE,
+    ATTR_TIME,
+    CONF_ENABLED,
     CONF_HOST,
     CONF_MODEL,
     CONF_PORT,
     EVENT_HOMEASSISTANT_STOP,
+    WEEKDAYS,
 )
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import (
@@ -55,7 +60,11 @@ from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import (
     API_WS_URL,
+    ATTR_TIMESPEC,
+    ATTR_VALVE_POSITION,
+    ATTR_WEEKDAYS,
     BASIC_INPUTS_EVENTS_TYPES,
+    BLU_TRV_SCHEDULE_DAYS,
     COIOT_UNCONFIGURED_ISSUE_ID,
     COMPONENT_ID_PATTERN,
     CONF_COAP_PORT,
@@ -1199,3 +1208,70 @@ def normalize_command_source(source: str | None) -> str | None:
     """Normalize the last command source to match translation keys."""
     # Sources mix case (e.g. "WS_in"); Wall Display also uses spaces ("RPC Set")
     return source and source.lower().replace(" ", "_")
+
+
+def blu_trv_schedule_rule_to_dict(rule: dict[str, Any]) -> dict[str, Any]:
+    """Convert a BLU TRV schedule rule to the format used by actions."""
+    result: dict[str, Any] = {CONF_ENABLED: rule.get("enable", True)}
+    if (weekly := _parse_blu_trv_timespec(rule["timespec"])) is None:
+        result[ATTR_TIMESPEC] = rule["timespec"]
+    else:
+        result[ATTR_TIME], result[ATTR_WEEKDAYS] = weekly
+    if "target_C" in rule:
+        result[ATTR_TEMPERATURE] = rule["target_C"]
+    if "pos" in rule:
+        result[ATTR_VALVE_POSITION] = rule["pos"]
+    return result
+
+
+def blu_trv_schedule_rule_from_dict(rule: dict[str, Any]) -> dict[str, Any]:
+    """Convert a rule from the format used by actions to a BLU TRV rule."""
+    time_: dt_time = rule[ATTR_TIME]
+    days = ",".join(
+        day for day in BLU_TRV_SCHEDULE_DAYS if day.lower() in rule[ATTR_WEEKDAYS]
+    )
+    # The TRV does not accept leading zeros in the timespec
+    result: dict[str, Any] = {
+        "enable": rule[CONF_ENABLED],
+        "timespec": f"0 {time_.minute} {time_.hour} * * {days}",
+    }
+    if ATTR_TEMPERATURE in rule:
+        result["target_C"] = rule[ATTR_TEMPERATURE]
+    else:
+        result["pos"] = rule[ATTR_VALVE_POSITION]
+    return result
+
+
+def _parse_blu_trv_timespec(timespec: str) -> tuple[str, list[str]] | None:
+    """Parse a weekly timespec ("0 30 6 * * MON,TUE") to time and weekdays."""
+    fields = timespec.split()
+    if len(fields) != 6:
+        return None
+    second, minute, hour, day_of_month, month, day_of_week = fields
+    if (
+        second != "0"
+        or not minute.isdigit()
+        or not hour.isdigit()
+        or int(minute) > 59
+        or int(hour) > 23
+        or day_of_month != "*"
+        or month != "*"
+    ):
+        return None
+    if day_of_week == "*":
+        days = set(BLU_TRV_SCHEDULE_DAYS)
+    else:
+        days = set()
+        for part in day_of_week.upper().split(","):
+            first, _, last = part.partition("-")
+            if first not in BLU_TRV_SCHEDULE_DAYS or (
+                last and last not in BLU_TRV_SCHEDULE_DAYS
+            ):
+                return None
+            start = BLU_TRV_SCHEDULE_DAYS.index(first)
+            end = BLU_TRV_SCHEDULE_DAYS.index(last) if last else start
+            if end < start:
+                return None
+            days.update(BLU_TRV_SCHEDULE_DAYS[start : end + 1])
+    weekdays = [day for day in WEEKDAYS if day.upper() in days]
+    return f"{int(hour):02d}:{int(minute):02d}:00", weekdays
